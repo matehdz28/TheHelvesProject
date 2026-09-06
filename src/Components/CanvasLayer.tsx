@@ -1,7 +1,7 @@
 import React from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
-import { usePortal } from "../rooms/portal/framework/PortalProvider ";
+import { usePortal } from "../rooms/portal/framework/PortalProvider";
 
 type CanvasLayerProps = {
   side: "A" | "B";

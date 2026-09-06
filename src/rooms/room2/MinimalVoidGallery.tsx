@@ -21,7 +21,6 @@ import {
 } from "../../prefabs-placer";
 import Cube from "../../prefabs/cube";
 import Sphere from "../../prefabs/Sphere";
-import { PortalPlane } from "../../Components/PortalPlane";
 
 /* ===== Config editor ===== */
 const EXIT_EDIT_KEY = "x";

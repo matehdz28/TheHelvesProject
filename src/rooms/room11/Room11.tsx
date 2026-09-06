@@ -12,7 +12,6 @@ import PaperRoom from "./paper/PaperRoom";
 import Corridor from "./Corridor";
 import { buildPath, makeConstrainer } from "./path";
 import { HudProbe, HudPanel } from "./DebugHud";
-import Intro from "./Intro";
 import { NOISE_GLSL } from "./glsl";
 import { useWind } from "../../audio/useWind";
 import { useLoopTrack } from "../../audio/useLoopTrack";
