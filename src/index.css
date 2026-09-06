@@ -1,0 +1,27 @@
+/*
+ * El canvas ocupa exactamente la ventana.
+ *
+ * Sin esto aplican los estilos por defecto del navegador: body lleva 8px de
+ * margen, que sumados a un contenedor de 100vh dan 16px de desbordamiento y
+ * aparecen barras de scroll. Ademas 100vw incluye el ancho de la barra, con lo
+ * que el desbordamiento se realimenta.
+ */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #000;
+  overscroll-behavior: none;
+}
+
+/* un canvas es inline por defecto y arrastra el hueco de la linea base */
+canvas {
+  display: block;
+}

@@ -25,21 +25,31 @@ export const GalerieBuildings: React.FC<GalerieBuildingsProps> = ({
   const ref = useRef<THREE.Group>(null!);
 
   useEffect(() => {
-    if (ref.current) {
-      scene.traverse((object: THREE.Object3D) => {
-        if (object instanceof THREE.Mesh) {
-          // 🔥 ACTIVAR SOMBRAS PARA CADA MESH DEL MODELO
-          object.castShadow = true;
-          object.receiveShadow = true;
+  if (!ref.current) return;
 
-          // Añadir a la lista de colisionables
-          if (!collidableMeshes.current.includes(object)) {
-            collidableMeshes.current.push(object);
-          }
-        }
-      });
+  const added: THREE.Mesh[] = [];
+
+  scene.traverse((object: THREE.Object3D) => {
+    if (object instanceof THREE.Mesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+
+      if (!collidableMeshes.current.includes(object)) {
+        collidableMeshes.current.push(object);
+        added.push(object);
+      }
     }
-  }, [collidableMeshes, scene]);
+  });
+
+  // 🔧 Clean-up: remover los que agregamos al desmontar
+  return () => {
+    const list = collidableMeshes.current;
+    for (const m of added) {
+      const i = list.indexOf(m);
+      if (i >= 0) list.splice(i, 1);
+    }
+  };
+}, [scene, collidableMeshes]);
 
   return (
     <primitive

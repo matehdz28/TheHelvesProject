@@ -1,162 +1,165 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
+import React, { useState, useEffect, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
 
-// Configuración
-const SPEED = 0.15;
-const FLY_SPEED = 0.1; // Velocidad extra cuando se está volando
-const GRAVITY = 0.002; 
-const JUMP_FORCE = 0.05; 
-const MIN_CAMERA_HEIGHT = 0.6;
-const COLLISION_DISTANCE = 0.55;
-const TOLERANCE = 0.02;
-const DAMPING = 0.85; 
-const GROUND_THRESHOLD = 0.1; 
+// Velocidades y física
+const WALK_SPEED = 0.3;
+const FLY_SPEED = 0.5;
+const GRAVITY = 0.002;
+const JUMP_FORCE = 0.05;
+const MAX_FALL = 0.2;
+
+// Colisión/jugador
+const MIN_CAMERA_HEIGHT = 0.6;   // "ojos" sobre el suelo
+const RADIUS = 0.38;             // radio de la cápsula
+const DOWN_RAY_MAX = 12.0;       // buscar suelo holgadamente
+const MARGIN = 0.02;             // separador mínimo
 
 interface MovementControllerProps {
   camera: THREE.PerspectiveCamera;
-  pivot: THREE.Object3D; 
+  pivot: THREE.Object3D;
   collidableMeshes: React.MutableRefObject<THREE.Mesh[]>;
 }
 
-export const MovementController: React.FC<MovementControllerProps> = ({ camera, pivot, collidableMeshes }) => {
-  const [movement, setMovement] = useState({
-    forward: false,
-    backward: false,
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-  });
-  const [velocityY, setVelocityY] = useState(0);
-  const isGrounded = useRef(false);
-  const fallSpeed = useRef(0);
+export const MovementController: React.FC<MovementControllerProps> = ({
+  camera,
+  pivot,
+  collidableMeshes,
+}) => {
+  const [keys, setKeys] = useState({ forward:false, backward:false, left:false, right:false, up:false, down:false });
+  const [velY, setVelY] = useState(0);
+  const grounded = useRef(false);
+  const fall = useRef(0);
+  const [flying, setFlying] = useState(false);
 
-  const [isFlying, setIsFlying] = useState(false); // 🔥 Variable que controla si se puede volar o no
+  // Guarda la última posición "100% segura"
+  const lastSafePos = useRef<THREE.Vector3>(new THREE.Vector3());
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      switch (event.key.toLowerCase()) {
-        case 'w': setMovement(prev => ({ ...prev, forward: true })); break;
-        case 's': setMovement(prev => ({ ...prev, backward: true })); break;
-        case 'a': setMovement(prev => ({ ...prev, left: true })); break;
-        case 'd': setMovement(prev => ({ ...prev, right: true })); break;
-        case ' ': 
-          if (isGrounded.current && !isFlying) { 
-            setVelocityY(JUMP_FORCE);
-            isGrounded.current = false;
-          }
-          if (isFlying) {
-            setMovement(prev => ({ ...prev, up: true }));
-          }
+    const kd = (e: KeyboardEvent) => {
+      switch (e.key.toLowerCase()) {
+        case "w": setKeys(p=>({...p,forward:true})); break;
+        case "s": setKeys(p=>({...p,backward:true})); break;
+        case "a": setKeys(p=>({...p,left:true})); break;
+        case "d": setKeys(p=>({...p,right:true})); break;
+        case " ":
+          if (flying) setKeys(p=>({...p,up:true}));
+          else if (grounded.current) { setVelY(JUMP_FORCE); grounded.current = false; }
           break;
-        case 'shift': 
-          if (isFlying) {
-            setMovement(prev => ({ ...prev, down: true }));
-          }
-          break;
-        case 'f': // 🔥 Presiona 'F' para activar/desactivar el modo vuelo
-          setIsFlying(prev => !prev);
-          break;
+        case "shift": if (flying) setKeys(p=>({...p,down:true})); break;
+        case "f": setFlying(v=>!v); break;
       }
     };
-
-    const handleKeyUp = (event: KeyboardEvent) => {
-      switch (event.key.toLowerCase()) {
-        case 'w': setMovement(prev => ({ ...prev, forward: false })); break;
-        case 's': setMovement(prev => ({ ...prev, backward: false })); break;
-        case 'a': setMovement(prev => ({ ...prev, left: false })); break;
-        case 'd': setMovement(prev => ({ ...prev, right: false })); break;
-        case ' ': 
-          if (isFlying) setMovement(prev => ({ ...prev, up: false }));
-          break;
-        case 'shift': 
-          if (isFlying) setMovement(prev => ({ ...prev, down: false }));
-          break;
+    const ku = (e: KeyboardEvent) => {
+      switch (e.key.toLowerCase()) {
+        case "w": setKeys(p=>({...p,forward:false})); break;
+        case "s": setKeys(p=>({...p,backward:false})); break;
+        case "a": setKeys(p=>({...p,left:false})); break;
+        case "d": setKeys(p=>({...p,right:false})); break;
+        case " ": if (flying) setKeys(p=>({...p,up:false})); break;
+        case "shift": if (flying) setKeys(p=>({...p,down:false})); break;
       }
     };
+    window.addEventListener("keydown", kd);
+    window.addEventListener("keyup", ku);
+    return ()=>{ window.removeEventListener("keydown", kd); window.removeEventListener("keyup", ku); };
+  }, [flying]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [isFlying]);
+  // Helper: test rápido de interpenetración (si estás demasiado cerca de cualquier triángulo)
+  const isPenetrating = (pos: THREE.Vector3, meshes: THREE.Object3D[]) => {
+    const dirs = [
+      new THREE.Vector3(1,0,0), new THREE.Vector3(-1,0,0),
+      new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,-1),
+      new THREE.Vector3(1,0,1).normalize(),  new THREE.Vector3(-1,0,1).normalize(),
+      new THREE.Vector3(1,0,-1).normalize(), new THREE.Vector3(-1,0,-1).normalize(),
+    ];
+    for (const n of dirs) {
+      const ray = new THREE.Raycaster(pos, n, 0, RADIUS - MARGIN);
+      const hits = ray.intersectObjects(meshes, false);
+      if (hits.length > 0 && hits[0].distance < (RADIUS - MARGIN)) return true;
+    }
+    return false;
+  };
 
   useFrame(() => {
-    const horizontalVelocity = new THREE.Vector3();
-    const newPosition = pivot.position.clone();
+    const collidables = collidableMeshes.current;
+    const pos = pivot.position.clone();
 
-    const direction = new THREE.Vector3();
-    camera.getWorldDirection(direction);
-    direction.y = 0;
-    direction.normalize();
+    // Dirección de vista plana
+    const fwd = new THREE.Vector3();
+    camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
 
-    const right = new THREE.Vector3();
-    right.crossVectors(direction, camera.up).normalize();
+    // Desplazamiento deseado
+    const spd = flying ? FLY_SPEED : WALK_SPEED;
+    const desired = new THREE.Vector3();
+    if (keys.forward)  desired.add(fwd);
+    if (keys.backward) desired.add(fwd.clone().multiplyScalar(-1));
+    if (keys.left)     desired.add(right.clone().multiplyScalar(-1));
+    if (keys.right)    desired.add(right);
+    if (desired.lengthSq() > 0) desired.normalize().multiplyScalar(spd);
 
-    const speed = isFlying ? FLY_SPEED : SPEED;
+    // SWEEP horizontal (3 alturas): limitar avance sin atravesar
+    if (desired.lengthSq() > 0) {
+      const dir = desired.clone().normalize();
+      const travel = desired.length() + RADIUS;
+      const heights = [MIN_CAMERA_HEIGHT - 0.3, MIN_CAMERA_HEIGHT, MIN_CAMERA_HEIGHT + 0.6];
+      let allow = desired.length();
 
-    // Crear rayos para cada dirección
-    const forwardRay = new THREE.Raycaster(newPosition, direction, 0, COLLISION_DISTANCE);
-    const backwardRay = new THREE.Raycaster(newPosition, direction.clone().negate(), 0, COLLISION_DISTANCE);
-    const leftRay = new THREE.Raycaster(newPosition, right.clone().negate(), 0, COLLISION_DISTANCE);
-    const rightRay = new THREE.Raycaster(newPosition, right, 0, COLLISION_DISTANCE);
-
-    const forwardCollisions = forwardRay.intersectObjects(collidableMeshes.current);
-    const backwardCollisions = backwardRay.intersectObjects(collidableMeshes.current);
-    const leftCollisions = leftRay.intersectObjects(collidableMeshes.current);
-    const rightCollisions = rightRay.intersectObjects(collidableMeshes.current);
-
-    if (movement.forward && forwardCollisions.length === 0) horizontalVelocity.add(direction.multiplyScalar(speed));
-    if (movement.backward && backwardCollisions.length === 0) horizontalVelocity.add(direction.multiplyScalar(-speed));
-    if (movement.left && leftCollisions.length === 0) horizontalVelocity.add(right.multiplyScalar(-speed));
-    if (movement.right && rightCollisions.length === 0) horizontalVelocity.add(right.multiplyScalar(speed));
-
-    horizontalVelocity.y = 0;
-    newPosition.add(horizontalVelocity);
-
-    if (isFlying) {
-      if (movement.up) newPosition.y += FLY_SPEED;
-      if (movement.down) newPosition.y -= FLY_SPEED;
-      setVelocityY(0);
-    } else {
-      if (!isGrounded.current) {
-        fallSpeed.current += GRAVITY;
-        setVelocityY(prev => prev - fallSpeed.current);
-      } else {
-        fallSpeed.current = 0;
+      for (const h of heights) {
+        const origin = new THREE.Vector3(pos.x, pos.y + h, pos.z);
+        const ray = new THREE.Raycaster(origin, dir, 0, travel);
+        const hits = ray.intersectObjects(collidables, false);
+        if (hits.length > 0) {
+          const safe = Math.max(0, hits[0].distance - RADIUS - MARGIN);
+          allow = Math.min(allow, safe);
+        }
       }
+      if (allow > 0) pos.add(dir.multiplyScalar(allow));
+    }
 
-      newPosition.y += velocityY;
+    // Vuelo / Gravedad
+    if (flying) {
+      if (keys.up)   pos.y += FLY_SPEED;
+      if (keys.down) pos.y -= FLY_SPEED;
+      setVelY(0); fall.current = 0; grounded.current = false;
+    } else {
+      if (!grounded.current) {
+        fall.current = Math.min(fall.current + GRAVITY, MAX_FALL);
+        setVelY(v => v - fall.current);
+      } else {
+        fall.current = 0;
+      }
+      if (velY !== 0) pos.y += velY;
 
-      // Detectar colisión con el suelo
-      const downRay = new THREE.Raycaster(pivot.position, new THREE.Vector3(0, -1, 0), 0, COLLISION_DISTANCE);
-      const downIntersects = downRay.intersectObjects(collidableMeshes.current);
-
-      if (downIntersects.length > 0) {
-        const distance = downIntersects[0].distance;
-
-        if (distance < COLLISION_DISTANCE - TOLERANCE) {
-          isGrounded.current = true;
-
-          if (distance <= GROUND_THRESHOLD) {
-            setVelocityY(0);
-            newPosition.y = THREE.MathUtils.lerp(newPosition.y, downIntersects[0].point.y + MIN_CAMERA_HEIGHT, DAMPING);
-          }
+      // suelo
+      const down = new THREE.Raycaster(pos, new THREE.Vector3(0,-1,0), 0, DOWN_RAY_MAX);
+      const gHits = down.intersectObjects(collidables, false);
+      if (gHits.length > 0) {
+        const hit = gHits[0];
+        if (hit.distance <= MIN_CAMERA_HEIGHT + 0.1) {
+          grounded.current = true;
+          setVelY(0);
+          pos.y = hit.point.y + MIN_CAMERA_HEIGHT; // snap estable
         } else {
-          isGrounded.current = false;
+          grounded.current = false;
         }
       } else {
-        isGrounded.current = false;
+        grounded.current = false;
       }
     }
 
-    pivot.position.copy(newPosition);
-});
+    // **No hay push-out**. En su lugar, validación final:
+    if (isPenetrating(pos, collidables)) {
+      // Si penetró (por numérica/lag), reviértelo al último seguro
+      pivot.position.copy(lastSafePos.current);
+      return;
+    }
 
+    // Llegó aquí: es seguro. Guardar como última segura.
+    pivot.position.copy(pos);
+    lastSafePos.current.copy(pos);
+  });
 
   return null;
 };
